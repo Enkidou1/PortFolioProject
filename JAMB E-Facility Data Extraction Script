@@ -1,0 +1,114 @@
+# Import required libraries
+import csv
+import re
+import os
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.wait import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
+from selenium.common.exceptions import NoSuchElementException
+# from dotenv import load_dotenv
+
+USERNAME = 'Tempuser'
+PASSWORD = 'Jamb$123'
+
+# Define constants for website navigation and data extraction
+CHROMEDRIVER_PATH = "chromedriver-win64\chromedriver.exe"
+LOGIN_URL = 'https://efacility.jamb.gov.ng/Signin'
+USERNAME_FIELD = 'UserName'
+PASSWORD_FIELD = 'password'
+LOGIN_BUTTON = 'Login'
+FIND_CANDIDATE = 'Find Candidate'
+SEARCH_DATA = 'Search Data'
+REG_FIELD_NAME = 'ctl00$MainContent$txtRegNumber'
+DATA_CLASS = 'col-md-8'
+DATA_TABLE = 'table'
+CSV_FILENAME = 'Run.csv'
+OUTPUT_CSV = f'{CSV_FILENAME.split(".")[0]}_output.csv'
+
+def initialize_webdriver():
+    service = Service(CHROMEDRIVER_PATH)
+    driver = webdriver.Chrome(service=service)
+    driver.get(LOGIN_URL)
+    driver.maximize_window()
+    wait = WebDriverWait(driver, 10)
+    return driver, wait
+
+def login(driver, wait, username, password):
+    wait.until(EC.presence_of_element_located((By.NAME, USERNAME_FIELD)))
+    username_elem = driver.find_element(By.NAME, USERNAME_FIELD)
+    password_elem = driver.find_element(By.NAME, PASSWORD_FIELD)
+    username_elem.send_keys(username)
+    password_elem.send_keys(password)
+    driver.find_element(By.LINK_TEXT, LOGIN_BUTTON).click()
+
+def search_candidate(driver, wait, reg_num):
+    reg_number = driver.find_element(By.NAME, REG_FIELD_NAME)
+    reg_number.clear()
+    reg_number.send_keys(reg_num)
+    driver.find_element(By.LINK_TEXT, SEARCH_DATA).click()
+
+def get_candidate_info(driver, reg_num):
+    try:
+        element = driver.find_element(By.CLASS_NAME, DATA_CLASS)
+        element_innerHTML = element.get_attribute('innerHTML')
+        
+        full_name = re.search(r'Full Name: <b>(.*?)<\/b>', element_innerHTML).group(1)
+        gsm_number = re.search(r'GSM No.: <b>(.*?)<\/b>', element_innerHTML).group(1)
+        email = re.search(r'e-Facility email: (.*?)<br>', element_innerHTML).group(1)
+        score = re.search(r'UTME Scores Aggregate: (\d+)', element_innerHTML).group(1)
+        gender = re.search(r'Gender: <b>(.*?)<\/b>', element_innerHTML).group(1)  # Added this line for Gender
+        
+        course_Inst_div = driver.find_element(By.CSS_SELECTOR, "div#MainContent_dvCourse div.panel-body")
+        table_element = course_Inst_div.find_element(By.TAG_NAME, 'table')
+        rows = table_element.find_elements(By.TAG_NAME, 'tr')
+        cells = rows[1].find_elements(By.TAG_NAME, 'td')
+        course = cells[0].text
+        institution = cells[1].text
+
+        return {
+            'Registration Number': reg_num,
+            'Full Name': full_name,
+            'GSM Number': gsm_number,
+            'Email': email,
+            'Score': score,
+            'Gender': gender,  # Added this line for Gender
+            'Institution': institution,
+            'Course': course
+        }
+    except (AttributeError, IndexError, NoSuchElementException):
+        return None
+
+def main():
+    print("Initializing...")
+    driver, wait = initialize_webdriver()
+    print("Logging into JAMB E-Facility....")
+    login(driver, wait, USERNAME, PASSWORD)
+    print("Log in Successful")
+    
+    driver.find_element(By.LINK_TEXT, FIND_CANDIDATE).click()
+
+    with open(CSV_FILENAME, 'r') as infile:
+        csvreader = csv.reader(infile)
+        next(csvreader)
+        registration_numbers = [row[0] for row in csvreader]
+    print(f"Loading Registration Numbers from {CSV_FILENAME}")
+    print("Fetching Candidate Data...")
+
+    with open(OUTPUT_CSV, 'w', newline='') as outfile:
+        fieldnames = ['Registration Number', 'Full Name', 'GSM Number', 'Email', 'Score', 'Gender', 'Institution', 'Course']  # Added 'Gender' in fieldnames
+        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for idx, reg_num in enumerate(registration_numbers, 1):
+            search_candidate(driver, wait, reg_num)
+            candidate_info = get_candidate_info(driver, reg_num)
+            if candidate_info:
+                writer.writerow(candidate_info)
+            print(f"{idx}/{len(registration_numbers)} processed")
+    print(f"Program Completed Successfully.")
+    print(f"Your Output file is {OUTPUT_CSV}")
+
+if __name__ == "__main__":
+    main()
